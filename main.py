@@ -1,64 +1,213 @@
-# main.py
-import db  # Importa el módulo de la base de datos
+import flet
+from flet import (IconButton, Page, Row, TextField, icons, Column,
+                  Text, ElevatedButton, DataTable, DataColumn,
+                  DataRow, DataCell, AlertDialog, TextButton, SnackBar)
+import db
 import empresas
-import facturas
-import pagos
-import informes  # Aunque aún no tenga contenido, ya lo importamos
 import utils
-from datetime import datetime
+import modelos
 
-def main():
-    """Función principal que muestra el menú y ejecuta las acciones."""
+def main(page: Page):
+    page.title = "Gestión de Facturas"
+    page.vertical_alignment = "start"
+    page.horizontal_alignment = "center"
+    page.window_width = 800
+    page.window_height = 600
 
-    # Crea la base de datos si no existe
-    if not db.DATABASE_PATH:
-        db.crear_base_de_datos()
+    # --- Variables de estado ---
+    empresa_seleccionada_id = None
+    empresas_table = None
+    rut_field = None
+    nombre_field = None
+    direccion_field = None
 
+    # --- Funciones de manejo de eventos (FUERA de build_empresas_ui) ---
 
-    while True:
-        print("\n--- Sistema de Gestión de Facturas ---")
-        print("1. Listar Empresas")
-        print("2. Ingresar Empresa")
-        print("3. Listar Facturas")
-        print("4. Consultar Factura (por número)")
-        print("5. Buscar Facturas por Empresa (por RUT)")
-        print("6. Buscar Facturas por Fecha")
-        print("7. Ingresar Factura")
-        print("8. Registrar Pago")
-        print("9. Consultar Pagos de Factura")
-        print("x. Salir")  # Usamos 'x' para salir, para evitar confusión con números
+    def eliminar_empresa_click(empresa_id):
+        print(f"Función eliminar_empresa_click llamada con ID: {empresa_id}")
 
-        opcion = input("Elija una opción: ")
+        def confirmar_eliminacion(e):
+            print("Botón 'Sí' presionado.")
+            if empresas.eliminar_empresa(empresa_id):
+                actualizar_interfaz()
+                dialogo_confirmacion.open = False
+                mostrar_dialogo_alerta("Éxito", "Empresa eliminada correctamente.")
 
-        if opcion == '1':
-            empresas.listar_empresas()
-        elif opcion == '2':
-            empresas.ingresar_empresa()
-        elif opcion == '3':
-            facturas.listar_facturas()
-        elif opcion == '4':
-            num_factura = input("Ingrese el número de factura a consultar: ")
-            facturas.consultar_factura(num_factura)
-        elif opcion == '5':
-            rut = input("Ingrese el RUT de la empresa para buscar facturas: ")
-            facturas.buscar_facturas_por_empresa(rut)
-        elif opcion == '6':
-            fecha_inicio = input("Ingrese la fecha de inicio (AAAA-MM-DD): ")
-            fecha_fin = input("Ingrese la fecha de fin (AAAA-MM-DD): ")
-            facturas.buscar_facturas_por_fecha(fecha_inicio, fecha_fin)
-        elif opcion == '7':
-            facturas.ingresar_factura()
-        elif opcion == '8':
-            pagos.registrar_pago()
-        elif opcion == '9':
-            num_factura = input("Ingrese el número de factura para ver sus pagos: ")
-            pagos.consultar_pagos_factura(num_factura)
+            else:
+                dialogo_confirmacion.open = False
+                mostrar_dialogo_alerta("Error", "No se pudo eliminar la empresa.")
+            page.update()
 
-        elif opcion.lower() == 'x':
-            print("Saliendo...")
-            break
-        else:
-            print("Opción no válida. Intente de nuevo.")
+        def cancelar_eliminacion(e):
+            print("Botón 'No' presionado.")
+            dialogo_confirmacion.open = False
+            page.update()
 
-if __name__ == "__main__":
-    main()
+        dialogo_confirmacion = AlertDialog(
+            modal=True,
+            title=Text("Confirmar Eliminación"),
+            content=Text("¿Está seguro de que desea eliminar esta empresa?"),
+            actions=[
+                TextButton("Sí", on_click=confirmar_eliminacion),
+                TextButton("No", on_click=cancelar_eliminacion),
+            ],
+        )
+        page.dialog = dialogo_confirmacion
+        dialogo_confirmacion.open = True
+        page.update()
+
+    def seleccionar_empresa(empresa_id):
+        """Carga los datos de la empresa seleccionada en los campos."""
+        nonlocal empresa_seleccionada_id
+        empresa = empresas.obtener_empresa_por_id(empresa_id)
+        if empresa:
+            empresa_seleccionada_id = empresa.id
+            rut_field.value = empresa.rut
+            nombre_field.value = empresa.nombre
+            direccion_field.value = empresa.direccion
+            set_campos_empresa_enabled(False)
+            page.update()
+    def set_campos_empresa_enabled(enabled):
+        """Habilita o deshabilita los campos de entrada de la empresa."""
+        rut_field.disabled = not enabled
+    # --- Interfaz para Empresas (función separada) ---
+
+    def build_empresas_ui():
+        """Construye la interfaz de usuario para la sección de Empresas."""
+        nonlocal empresa_seleccionada_id
+        nonlocal empresas_table
+        nonlocal rut_field, nombre_field, direccion_field
+
+        # Los campos *dentro* de build_empresas_ui
+        rut_field = TextField(label="RUT", width=150)
+        nombre_field = TextField(label="Nombre", width=300)
+        direccion_field = TextField(label="Dirección", width=300)
+
+        empresas_table = DataTable(
+            columns=[
+                DataColumn(Text("ID")),
+                DataColumn(Text("RUT")),
+                DataColumn(Text("Nombre")),
+                DataColumn(Text("Dirección")),
+                DataColumn(Text("Acciones")),
+            ],
+            rows=[],
+        )
+
+        def mostrar_dialogo_alerta(titulo, texto):
+            dlg = AlertDialog(
+                title=Text(titulo),
+                content=Text(texto)
+            )
+            page.dialog = dlg
+            dlg.open = True
+            page.update()
+
+        def agregar_empresa_click(e):
+            nonlocal empresa_seleccionada_id
+            nonlocal rut_field, nombre_field, direccion_field
+            rut = rut_field.value
+            nombre = nombre_field.value
+            direccion = direccion_field.value
+
+            if not utils.validar_rut(rut):
+                mostrar_dialogo_alerta("Error", "RUT inválido.")
+                return
+
+            if not nombre:
+                mostrar_dialogo_alerta("Error", "El nombre de la empresa es obligatorio.")
+                return
+
+            if empresas.ingresar_empresa(rut, nombre, direccion):
+                rut_field.value = ""
+                nombre_field.value = ""
+                direccion_field.value = ""
+                empresa_seleccionada_id = None
+                actualizar_interfaz()
+                mostrar_dialogo_alerta("Éxito", "Empresa agregada correctamente.")
+            else:
+                mostrar_dialogo_alerta("Error", "Ya existe una empresa con ese RUT.")
+
+        def actualizar_empresa_click(e):
+            nonlocal empresa_seleccionada_id
+            nonlocal rut_field, nombre_field, direccion_field
+            if empresa_seleccionada_id is None:
+                mostrar_dialogo_alerta("Error", "Seleccione una empresa de la lista para actualizar.")
+                return
+
+            rut = rut_field.value
+            nombre = nombre_field.value
+            direccion = direccion_field.value
+
+            if not utils.validar_rut(rut):
+                mostrar_dialogo_alerta("Error", "RUT inválido.")
+                return
+
+            if not nombre:
+                mostrar_dialogo_alerta("Error", "El nombre de la empresa es obligatorio.")
+                return
+
+            if empresas.actualizar_empresa(empresa_seleccionada_id, rut, nombre, direccion):
+                rut_field.value = ""
+                nombre_field.value = ""
+                direccion_field.value = ""
+                empresa_seleccionada_id = None
+                set_campos_empresa_enabled(True)
+                actualizar_interfaz()
+                mostrar_dialogo_alerta("Éxito", "Empresa actualizada correctamente.")
+            else:
+                mostrar_dialogo_alerta("Error", "Ya existe una empresa con ese RUT.")
+
+        # Botones
+        agregar_button = ElevatedButton("Agregar", on_click=agregar_empresa_click)
+        actualizar_button = ElevatedButton("Actualizar", on_click=actualizar_empresa_click)
+
+        # Construir y retornar la interfaz de Empresas, *incluyendo* la tabla
+        return Column(
+            [
+                Text("Empresas", size=20),
+                Row([rut_field, nombre_field, direccion_field], alignment="start", vertical_alignment="start"),
+                Row([agregar_button, actualizar_button], wrap=True),
+                empresas_table,  # Retornamos la tabla
+            ]
+        )
+
+    def listar_empresas():
+        """Obtiene las empresas de la BD y las muestra en la tabla."""
+        nonlocal empresas_table
+        if empresas_table is None:
+            return
+
+        #Usar del(del) para eliminar las filas de una en una
+        #empresas_table.rows.clear() #Ya no se limpia
+        for row in reversed(empresas_table.rows): # Itera en reversa
+            del empresas_table.rows[empresas_table.rows.index(row)] # Elimina
+
+        lista_empresas = empresas.listar_empresas()
+        for empresa in lista_empresas:
+            empresas_table.rows.append(
+                DataRow(
+                    cells=[
+                        DataCell(Text(empresa['id'])),
+                        DataCell(Text(empresa['rut'])),
+                        DataCell(Text(empresa['nombre'])),
+                        DataCell(Text(empresa['direccion'])),
+                        DataCell(
+                            Row([
+                                IconButton(icon=icons.EDIT_OUTLINED, on_click=lambda e, empresa_id=empresa['id']: seleccionar_empresa(empresa_id)),
+                                IconButton(icon=icons.DELETE_OUTLINED, on_click=lambda e, empresa_id=empresa['id']: eliminar_empresa_click(empresa_id)),
+                            ])
+                        ),
+                    ]
+                )
+            )
+        page.update()
+
+    def actualizar_interfaz():
+        """Actualiza toda la interfaz de la página."""
+        page.controls = [build_empresas_ui()]
+        listar_empresas()
+        page.update()
+
+    # Inicializar la interfaz
+    actualizar_interfaz()

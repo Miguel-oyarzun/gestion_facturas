@@ -1,5 +1,6 @@
 # facturas.py
-import db  # Importamos el módulo db
+import db
+import empresas  # Importamos el módulo empresas
 from datetime import datetime
 
 def listar_facturas():
@@ -27,68 +28,134 @@ def listar_facturas():
     except Exception as e:
         print(f"Error al listar facturas: {e}")
 
-# ... (El resto de las funciones de facturas.py) ...
-def ingresar_factura():
-    """Ingresa una nueva factura a la base de datos."""
-    conn = None
+def consultar_factura(numero_factura):
+    """Muestra los detalles de una factura, incluyendo los pagos asociados."""
     try:
-        conn, cursor = db.conectar_db()
+        factura = db.ejecutar_consulta("""
+            SELECT
+                f.numero_factura,
+                f.fecha_emision,
+                f.monto,
+                f.descripcion,
+                e.nombre AS nombre_empresa,
+                e.rut AS rut_empresa
+            FROM Facturas f
+            JOIN Empresas e ON f.empresa_id = e.id
+            WHERE f.numero_factura = ?
+        """, (numero_factura,), fetchone=True)
 
-        # --- 1. Seleccionar la empresa ---
-        # listar_empresas()  # Mostrar las empresas existentes, se debe importar el modulo empresas
-        while True:
-            try:
-                empresa_id = int(input("Ingrese el ID de la empresa a la que pertenece la factura (o 0 para cancelar): "))
-                if empresa_id == 0:
-                    return  # Salir
-                #verificar que la empresa exista
-                empresa = db.ejecutar_consulta("SELECT * FROM Empresas Where id = ?", (empresa_id,), fetchone = True)
-                if not empresa:
-                    print("Empresa no existe, intente nuevamente")
-                    continue
-                break
-            except ValueError:
-                print("ID inválido, intente nuevamente")
+        if not factura:
+            print("Factura no encontrada.")
+            return
 
-        # --- 2. Obtener datos de la factura ---
-        while True:
-            numero_factura = input("Ingrese el número de factura: ")
-            #validar que la factura no exista
-            factura_existente = db.ejecutar_consulta("SELECT * FROM Facturas WHERE numero_factura = ?", (numero_factura,), fetchone = True)
-            if factura_existente:
-                print("Ya existe una factura con ese número")
-                continue
-            fecha_emision_str = input("Ingrese la fecha de emisión (AAAA-MM-DD): ")
-            try:
-                fecha_emision = datetime.strptime(fecha_emision_str, "%Y-%m-%d").date()
-            except ValueError:
-                print("Formato de fecha inválido. Use AAAA-MM-DD.")
-                continue
+        print("\n--- Detalles de la Factura ---")
+        print(f"Número: {factura['numero_factura']}")
+        print(f"Fecha: {factura['fecha_emision']}")
+        print(f"Monto: {factura['monto']}")
+        print(f"Descripción: {factura['descripcion']}")
+        print(f"Empresa: {factura['nombre_empresa']} (RUT: {factura['rut_empresa']})")
 
-            while True:
-                try:
-                    monto = float(input("Ingrese el monto total de la factura: "))
-                    if monto <= 0:
-                        print("El monto debe ser mayor que cero.")
-                        continue
-                    break
-                except ValueError:
-                    print("Monto inválido. Ingrese un número.")
+        pagos = db.ejecutar_consulta("""
+            SELECT
+                p.fecha_pago,
+                p.monto_pagado,
+                mp.nombre AS metodo_pago
+            FROM Pagos p
+            JOIN MetodosPago mp ON p.metodo_pago_id = mp.id
+            WHERE p.factura_id = (SELECT id FROM Facturas WHERE numero_factura = ?)
+        """, (numero_factura,), fetchall=True)
 
-            descripcion = input("Ingrese una descripción (opcional): ")
-            ruta_archivo = input("Ingrese la ruta al archivo de la factura (opcional): ")
+        if pagos:
+            print("\n--- Pagos Asociados ---")
+            for pago in pagos:
+                print(f"Fecha: {pago['fecha_pago']}, Monto: {pago['monto_pagado']}, Método: {pago['metodo_pago']}")
+        else:
+            print("\nNo hay pagos registrados para esta factura.")
 
-            # --- 3. Insertar la factura ---
-            db.ejecutar_consulta("""
-                INSERT INTO Facturas (numero_factura, fecha_emision, monto, descripcion, archivo_factura, empresa_id)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (numero_factura, fecha_emision, monto, descripcion, ruta_archivo, empresa_id), commit=True)
-
-            print("Factura ingresada exitosamente.")
-            break  # Salir del bucle de ingreso de datos de factura
+        saldo = calcular_saldo_pendiente(numero_factura)
+        print(f"\nSaldo Pendiente: {saldo}")
 
     except Exception as e:
-        print(f"Error: {e}")
-    finally:
-        if conn:
-            conn.close()
+        print(f"Error al consultar la factura: {e}")
+
+def calcular_saldo_pendiente(numero_factura):
+    """Calcula el saldo pendiente de una factura."""
+    try:
+        factura = db.ejecutar_consulta("SELECT monto FROM Facturas WHERE numero_factura = ?", (numero_factura,), fetchone=True)
+        if not factura:
+            return None
+
+        monto_factura = factura['monto']
+
+        pagos = db.ejecutar_consulta("""
+            SELECT SUM(monto_pagado) AS total_pagado
+            FROM Pagos
+            WHERE factura_id = (SELECT id FROM Facturas WHERE numero_factura = ?)
+        """, (numero_factura,), fetchone=True)
+
+        total_pagado = pagos['total_pagado'] if pagos['total_pagado'] else 0
+        saldo = monto_factura - total_pagado
+        return saldo
+
+    except Exception as e:
+        print(f"Error al calcular el saldo: {e}")
+        return None
+
+def buscar_facturas_por_empresa(rut_empresa):
+    """Busca facturas por RUT de empresa."""
+    try:
+        if not utils.validar_rut(rut_empresa):
+            print("RUT inválido.")
+            return
+
+        facturas = db.ejecutar_consulta("""
+            SELECT
+                f.numero_factura,
+                f.fecha_emision,
+                f.monto,
+                e.nombre AS nombre_empresa
+            FROM Facturas f
+            JOIN Empresas e ON f.empresa_id = e.id
+            WHERE e.rut = ?
+            ORDER BY f.fecha_emision DESC
+        """, (rut_empresa,), fetchall=True)
+
+        if facturas:
+            print("\n--- Facturas Encontradas ---")
+            for factura in facturas:
+                print(f"Número: {factura['numero_factura']}, Fecha: {factura['fecha_emision']}, Monto: {factura['monto']}, Empresa: {factura['nombre_empresa']}")
+        else:
+            print("No se encontraron facturas para esa empresa.")
+
+    except Exception as e:
+        print(f"Error al buscar facturas por empresa: {e}")
+
+def buscar_facturas_por_fecha(fecha_inicio_str, fecha_fin_str):
+    """Busca facturas por rango de fechas."""
+    try:
+        fecha_inicio = datetime.strptime(fecha_inicio_str, "%Y-%m-%d").date()
+        fecha_fin = datetime.strptime(fecha_fin_str, "%Y-%m-%d").date()
+
+        facturas = db.ejecutar_consulta("""
+            SELECT
+                f.numero_factura,
+                f.fecha_emision,
+                f.monto,
+                e.nombre AS nombre_empresa
+            FROM Facturas f
+            JOIN Empresas e ON f.empresa_id = e.id
+            WHERE f.fecha_emision BETWEEN ? AND ?
+            ORDER BY f.fecha_emision DESC
+        """, (fecha_inicio, fecha_fin), fetchall=True)  # <---  Aquí CIERRAN las triples comillas
+
+        if facturas:
+            print("\n--- Facturas Encontradas ---")
+            for factura in facturas:
+                print(f"Número: {factura['numero_factura']}, Fecha: {factura['fecha_emision']}, Monto: {factura['monto']}, Empresa: {factura['nombre_empresa']}")
+        else:
+            print("No se encontraron facturas en ese rango de fechas.")
+
+    except ValueError:
+        print("Formato de fecha inválido. Use AAAA-MM-DD.")
+    except Exception as e:
+        print(f"Error al buscar facturas por fecha: {e}")
