@@ -1,0 +1,37 @@
+/* estilos.qss */
+
+#sidebar {
+    background-color: #343a40;
+    color: white;
+    padding: 20px;
+    border-right: 1px solid #495057;
+}
+
+#header {
+    background-color: #f8f9fa;
+    padding: 20px;
+    border-bottom: 1px solid #dee2e6;
+}
+
+QPushButton {
+    background-color: #e0e0e0;
+    color: #333333;
+    border: 1px solid #c0c0c0;
+    padding: 12px 24px;
+    border-radius: 10px;
+    margin-bottom: 10px;
+    font-size: 16px;
+    box-shadow: 2px 2px 5px #888888;
+}
+
+QPushButton:hover {
+    background-color: #c0c0c0;
+}
+
+#content {
+    padding: 20px;
+}
+
+QLabel {
+    font-size: 18px;
+}
